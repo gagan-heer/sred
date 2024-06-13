@@ -155,7 +155,7 @@ def get_batch_results(client, batch_id):
         print("Error in get_batch_results: ", str(e))
         raise e
 
- @app.route('/genai', methods=['POST'])
+@app.route('/genai', methods=['POST'])
 def genai():
     data = request.get_json()
     batch = data.get('batch', [])
