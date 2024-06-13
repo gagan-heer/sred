@@ -86,11 +86,23 @@ def upload_batch_file(client, batch_data, task_id):
     print("Uploading batch file with data: ", batch_data)
     try:
         # Create a .jsonl file for the batch requests
-        file_name = f'batch_input_{task_id}.jsonl'  # <- Modified this line
+        file_name = f'batch_input_{task_id}.jsonl'
+        
+        # Check if the directory is writable
+        if not os.access('.', os.W_OK):
+            print("Error: Directory is not writable.")
+            raise PermissionError("Directory is not writable.")
+        
         with open(file_name, 'w') as f:
             for item in batch_data:
                 f.write(json.dumps(item) + '\n')
+        
         print(f"Batch file content written to {file_name}")
+        
+        # Verify file creation
+        if not os.path.exists(file_name):
+            print(f"Error: File {file_name} was not created.")
+            raise FileNotFoundError(f"File {file_name} was not created.")
         
         # Upload the batch file to OpenAI
         with open(file_name, "rb") as f:
@@ -98,11 +110,13 @@ def upload_batch_file(client, batch_data, task_id):
                 file=f,
                 purpose="batch"
             )
+        
         print("Batch file uploaded, file ID: ", batch_input_file.id)
         return batch_input_file.id
     except Exception as e:
         print("Error in upload_batch_file: ", str(e))
         raise e
+
 
 def create_batch(client, batch_input_file_id):
     print("Creating batch with input file ID: ", batch_input_file_id)
