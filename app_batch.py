@@ -83,7 +83,9 @@ def process_batch(batch_data, api_key_index=0, retry_count=0):
         raise e
 
 def upload_batch_file(client, batch_data, task_id):
-    print("Uploading batch file with data: ", batch_data)
+    print(f"Entering upload_batch_file with task_id: {task_id}")
+    print("Batch data:", batch_data)
+    
     try:
         # Create a .jsonl file for the batch requests
         file_name = f'batch_input_{task_id}.jsonl'
@@ -116,6 +118,7 @@ def upload_batch_file(client, batch_data, task_id):
     except Exception as e:
         print("Error in upload_batch_file: ", str(e))
         raise e
+
 
 
 def create_batch(client, batch_input_file_id):
