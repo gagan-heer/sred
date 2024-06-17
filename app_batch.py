@@ -214,9 +214,14 @@ def job_status(job_id):
         }
     return jsonify(response)
 
-async def get_text_embedding(client, text, model=EMBEDDING_ENGINE):
+async def get_text_embedding(client, text, projectname, model=EMBEDDING_ENGINE):
     text = text.replace("\n", " ")
-    response = await client.embeddings.create(input=[text], model=model)
+    # Combine text and project name
+    if projectname:
+        combined_text = f"{text} {projectname}"
+    else:
+        combined_text = text
+    response = await client.embeddings.create(input=[combined_text], model=model)
     return response.data[0].embedding
 
 def cosine_similarity(vec1, vec2):
