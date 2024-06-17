@@ -214,14 +214,9 @@ def job_status(job_id):
         }
     return jsonify(response)
 
-async def get_text_embedding(client, text, projectname, model=EMBEDDING_ENGINE):
+async def get_text_embedding(client, text, model=EMBEDDING_ENGINE):
     text = text.replace("\n", " ")
-    # Combine text and project name
-    if projectname:
-        combined_text = f"{text} {projectname}"
-    else:
-        combined_text = text
-    response = await client.embeddings.create(input=[combined_text], model=model)
+    response = await client.embeddings.create(input=[text], model=model)
     return response.data[0].embedding
 
 def cosine_similarity(vec1, vec2):
@@ -230,8 +225,14 @@ def cosine_similarity(vec1, vec2):
     norm_vec2 = np.linalg.norm(vec2)
     return dot_product / (norm_vec1 * norm_vec2)
 
-async def calculate_similarity(client, text1, text2, text3, model=EMBEDDING_ENGINE):
-    embedding1 = await get_text_embedding(client, text1, text3, model=model)
+async def calculate_similarity(client, text1, text2, projectname, model=EMBEDDING_ENGINE):
+    text1 = text1.replace("\n", " ")
+    projectname = projectname.replace("\n", " ")
+    if projectname:
+        combinedText = f"{text1} {projectname}"
+    else:
+        combinedText = text1
+    embedding1 = await get_text_embedding(client, combinedText, model=model)
     embedding2 = await get_text_embedding(client, text2, model=model)
     similarity = cosine_similarity(embedding1, embedding2)
     return similarity
