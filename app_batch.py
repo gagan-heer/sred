@@ -225,8 +225,8 @@ def cosine_similarity(vec1, vec2):
     norm_vec2 = np.linalg.norm(vec2)
     return dot_product / (norm_vec1 * norm_vec2)
 
-async def calculate_similarity(client, text1, text2, model=EMBEDDING_ENGINE):
-    embedding1 = await get_text_embedding(client, text1, model=model)
+async def calculate_similarity(client, text1, text2, text3, model=EMBEDDING_ENGINE):
+    embedding1 = await get_text_embedding(client, text1, text3, model=model)
     embedding2 = await get_text_embedding(client, text2, model=model)
     similarity = cosine_similarity(embedding1, embedding2)
     return similarity
@@ -236,6 +236,7 @@ async def find_best_match():
     data = request.get_json()
     entry = data.get('entry')
     matches = data.get('matches')
+    projectName = data.get('projectName')
 
     if not entry or not matches:
         return jsonify({"error": "Invalid input"}), 400
@@ -247,7 +248,7 @@ async def find_best_match():
     best_match_id = None
 
     tasks = [
-        calculate_similarity(client, entry, match)
+        calculate_similarity(client, entry, match, projectName)
         for match in matches
     ]
 
