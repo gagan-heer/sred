@@ -1,12 +1,14 @@
 import os
 from flask import Flask, request, jsonify
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 import time
 import json
 from celery.exceptions import CeleryError
 from celery.result import AsyncResult
 from dotenv import load_dotenv
 from celery_config import make_celery
+import numpy as np
+import asyncio
 
 load_dotenv()
 
@@ -16,7 +18,7 @@ app = Flask(__name__)
 api_keys = os.getenv('OPENAI_API_KEYS').split(',')
 
 # Configure Redis URL
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+redis_url = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 
 # Configure Celery
 app.config.update(
@@ -29,6 +31,7 @@ BATCH_SIZE = 50000  # Number of requests to batch together
 POLL_INTERVAL = 10  # Time in seconds to wait between polling
 MAX_RETRY_ATTEMPTS = 1  # Maximum number of retry attempts for failed requests
 MAX_API_KEY_RETRY = len(api_keys)  # Maximum retry attempts for different API keys
+EMBEDDING_ENGINE = "text-embedding-3-small"
 
 @celery.task(name='app_batch.process_batch')
 def process_batch(batch_data, api_key_index=0, retry_count=0):
@@ -38,7 +41,9 @@ def process_batch(batch_data, api_key_index=0, retry_count=0):
     print("Task started with batch_data: ", batch_data)
 
     try:
-        batch_input_file_id = upload_batch_file(client, batch_data)
+        # Get the Celery task ID
+        task_id = process_batch.request.id
+        batch_input_file_id = upload_batch_file(client, batch_data, task_id)
         print("Batch input file ID: ", batch_input_file_id)
         batch_id = create_batch(client, batch_input_file_id)
         print("Batch ID: ", batch_id)
@@ -77,26 +82,44 @@ def process_batch(batch_data, api_key_index=0, retry_count=0):
         print("Error in process_batch: ", str(e))
         raise e
 
-def upload_batch_file(client, batch_data):
-    print("Uploading batch file with data: ", batch_data)
+def upload_batch_file(client, batch_data, task_id):
+    print(f"Entering upload_batch_file with task_id: {task_id}")
+    print("Batch data:", batch_data)
+    
     try:
         # Create a .jsonl file for the batch requests
-        with open('batchinput.jsonl', 'w') as f:
+        file_name = f'batch_input_{task_id}.jsonl'
+        
+        # Check if the directory is writable
+        if not os.access('.', os.W_OK):
+            print("Error: Directory is not writable.")
+            raise PermissionError("Directory is not writable.")
+        
+        with open(file_name, 'w') as f:
             for item in batch_data:
                 f.write(json.dumps(item) + '\n')
-        print("Batch file content written to batchinput.jsonl")
+        
+        print(f"Batch file content written to {file_name}")
+        
+        # Verify file creation
+        if not os.path.exists(file_name):
+            print(f"Error: File {file_name} was not created.")
+            raise FileNotFoundError(f"File {file_name} was not created.")
         
         # Upload the batch file to OpenAI
-        with open("batchinput.jsonl", "rb") as f:
+        with open(file_name, "rb") as f:
             batch_input_file = client.files.create(
                 file=f,
                 purpose="batch"
             )
+        
         print("Batch file uploaded, file ID: ", batch_input_file.id)
         return batch_input_file.id
     except Exception as e:
         print("Error in upload_batch_file: ", str(e))
         raise e
+
+
 
 def create_batch(client, batch_input_file_id):
     print("Creating batch with input file ID: ", batch_input_file_id)
@@ -149,8 +172,8 @@ def get_batch_results(client, batch_id):
         print("Error in get_batch_results: ", str(e))
         raise e
 
-@app.route('/genai', methods=['POST'])
-def genai():
+@app.route('/bcomp', methods=['POST'])
+def bcomp():
     data = request.get_json()
     batch = data.get('batch', [])
     print("batch: ", batch)
@@ -169,9 +192,10 @@ def genai():
         print("Error: ", e)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/status/<job_id>', methods=['GET'])
+@app.route('/bstatus/<job_id>', methods=['GET'])
 def job_status(job_id):
     task = AsyncResult(job_id, app=celery)
+    
     if task.state == 'PENDING':
         response = {
             'state': task.state,
@@ -189,6 +213,53 @@ def job_status(job_id):
             'status': str(task.info)  # This is the exception raised
         }
     return jsonify(response)
+
+async def get_text_embedding(client, text, model=EMBEDDING_ENGINE):
+    text = text.replace("\n", " ")
+    response = await client.embeddings.create(input=[text], model=model)
+    return response.data[0].embedding
+
+def cosine_similarity(vec1, vec2):
+    dot_product = np.dot(vec1, vec2)
+    norm_vec1 = np.linalg.norm(vec1)
+    norm_vec2 = np.linalg.norm(vec2)
+    return dot_product / (norm_vec1 * norm_vec2)
+
+async def calculate_similarity(client, text1, text2, model=EMBEDDING_ENGINE):
+    embedding1 = await get_text_embedding(client, text1, model=model)
+    embedding2 = await get_text_embedding(client, text2, model=model)
+    similarity = cosine_similarity(embedding1, embedding2)
+    return similarity
+
+@app.route('/find_best_match', methods=['POST'])
+async def find_best_match():
+    data = request.get_json()
+    entry = data.get('entry')
+    matches = data.get('matches')
+
+    if not entry or not matches:
+        return jsonify({"error": "Invalid input"}), 400
+
+    current_api_key = api_keys[0]
+    client = AsyncOpenAI(api_key=current_api_key)
+
+    max_similarity = -1
+    best_match_id = None
+
+    tasks = [
+        calculate_similarity(client, entry, match)
+        for match in matches
+    ]
+
+    similarities = await asyncio.gather(*tasks)
+
+    for idx, similarity in enumerate(similarities):
+        if similarity > max_similarity:
+            max_similarity = similarity
+            best_match_id = idx + 1
+
+    print(f"For entry: {entry}, best match is: {best_match_id} with similarity score: {max_similarity}")
+    return jsonify({"best_match_id": best_match_id, "similarity_score": max_similarity})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
